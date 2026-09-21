@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "check": "tsc -b --pretty false",
     "script": "tsx",
-    "script:smoke": "tsx scripts/smoke.ts"
+    "script:smoke": "tsx scripts/smoke.ts",
+    "script:registry": "tsx scripts/registry-smoke.ts"
   },
   "dependencies": {
     "@jup-ag/api": "^6.0.48",
