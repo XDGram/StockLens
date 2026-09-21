@@ -34,6 +34,7 @@ export interface FindingEvidence {
 export interface ControlFinding {
   id: string
   type: ControlType
+  address: string | null
   classification: ControlClassification
   severity: FindingSeverity
   title: string

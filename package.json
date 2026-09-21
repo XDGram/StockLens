@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test": "tsx --test tests/scoring/classify.test.ts",
     "lint": "oxlint",
     "preview": "vite preview",
     "check": "tsc -b --pretty false",

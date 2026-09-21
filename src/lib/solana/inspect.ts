@@ -26,9 +26,8 @@ import {
 import { PublicKey, type Connection } from '@solana/web3.js'
 
 import { ISSUER_REGISTRY, REGISTRY_VERSION, lookupMint } from '../registry'
+import { classifyControls } from '../scoring/classify'
 import type {
-  ControlFinding,
-  ControlType,
   JsonValue,
   MintExtensionResult,
   ScanResult,
@@ -142,49 +141,6 @@ async function decodeExtensions(
   )
 }
 
-function classifyAuthority(
-  observed: string | null,
-  expected: string | null | undefined,
-): 'expected' | 'unexpected' | 'unknown' {
-  if (expected === undefined || expected === null) return 'unknown'
-  return observed === expected ? 'expected' : 'unexpected'
-}
-
-function authorityFinding(
-  id: string,
-  type: ControlType,
-  title: string,
-  observed: string | null,
-  expected: string | null | undefined,
-  mintAddress: string,
-): ControlFinding {
-  const classification = classifyAuthority(observed, expected)
-
-  return {
-    id,
-    type,
-    classification,
-    severity: classification === 'unexpected' ? 'warning' : 'info',
-    title,
-    summary:
-      observed === null
-        ? `${title} is not set.`
-        : classification === 'expected'
-          ? `${title} matches the issuer registry.`
-          : `${title} exists, but the issuer registry does not document this authority.`,
-    observedAuthority: observed,
-    expectedAuthority: expected,
-    evidence: [
-      {
-        source: 'onchain',
-        label: title,
-        value: observed ?? undefined,
-        reference: mintAddress,
-      },
-    ],
-  }
-}
-
 export async function scanMint(
   connection: Connection,
   mintAddress: string,
@@ -211,16 +167,6 @@ export async function scanMint(
   const extensions = isToken2022
     ? await decodeExtensions(mint, connection, address)
     : []
-  const permanentDelegate = extensions.find(
-    (extension) => extension.typeId === ExtensionType.PermanentDelegate,
-  )
-  const permanentDelegateAddress =
-    permanentDelegate?.data &&
-    typeof permanentDelegate.data === 'object' &&
-    !Array.isArray(permanentDelegate.data) &&
-    typeof permanentDelegate.data.delegate === 'string'
-      ? permanentDelegate.data.delegate
-      : null
   const now = new Date().toISOString()
   const issuer = registryEntry
     ? {
@@ -239,7 +185,7 @@ export async function scanMint(
         `${extension.type}: ${extension.decodingError ?? 'Unknown decoding error'}`,
     )
 
-  return {
+  const scan: ScanResult = {
     scanId: globalThis.crypto.randomUUID(),
     mintAddress: address.toBase58(),
     cluster: 'mainnet-beta',
@@ -266,26 +212,12 @@ export async function scanMint(
       officialSource: registryEntry?.source,
       verifiedAt: now,
     },
-    controlFindings: [
-      authorityFinding(
-        'freeze-authority',
-        'freeze-authority',
-        'Freeze authority',
-        mint.freezeAuthority?.toBase58() ?? null,
-        registryEntry?.expectedControls.freezeAuthority,
-        address.toBase58(),
-      ),
-      authorityFinding(
-        'permanent-delegate',
-        'permanent-delegate',
-        'Permanent delegate',
-        permanentDelegateAddress,
-        registryEntry?.expectedControls.permanentDelegate,
-        address.toBase58(),
-      ),
-    ],
+    controlFindings: [],
     errors,
   }
+
+  const { findings, verification } = classifyControls(scan)
+  return { ...scan, controlFindings: findings, verification }
 }
 
 export const REGISTERED_MINT_COUNT = ISSUER_REGISTRY.length

@@ -39,8 +39,8 @@ const noDocumentedControls: ExpectedControls = {
  *   https://pyth.dourolabs.app/v1/symbols
  * - Neither issuer source documents permanent-delegate or freeze-authority
  *   addresses for these mints, so those expected values intentionally remain
- *   null. Runtime on-chain findings must therefore be classified as unknown,
- *   not automatically expected or malicious.
+ *   null. Under the grading policy, a live authority where null is expected is
+ *   an unexpected mismatch; the explanation must still avoid generic fear.
  *
  * A token is verified only by an exact, case-sensitive mint match. Symbols and
  * tickers are discovery metadata and must never establish token identity.
