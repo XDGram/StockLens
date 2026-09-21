@@ -55,11 +55,51 @@ export interface VerificationResult {
   verifiedAt: string
 }
 
+export type TokenProgramKind = 'token-2022' | 'legacy-spl'
+
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue }
+
+export interface MintExtensionResult {
+  type: string
+  typeId: number
+  recognized: boolean
+  data: JsonValue | null
+  rawDataBase64: string
+  decodingError?: string
+}
+
+export interface MintAccountDetails {
+  mintAuthority: string | null
+  freezeAuthority: string | null
+  supply: string
+  decimals: number
+  isInitialized: boolean
+}
+
+export interface ScanIssuerInfo {
+  issuer: string
+  symbol: string
+  underlyingTicker: string
+  source: string
+  registryVersion: string
+  lastVerifiedAt: string
+}
+
 export interface ScanResult {
   scanId: string
   mintAddress: string
   cluster: SolanaCluster
   tokenProgram: string
+  tokenProgramKind: TokenProgramKind
+  mint: MintAccountDetails
+  extensions: MintExtensionResult[]
+  issuer: ScanIssuerInfo | null
   scannedAt: string
   verification: VerificationResult
   controlFindings: ControlFinding[]
