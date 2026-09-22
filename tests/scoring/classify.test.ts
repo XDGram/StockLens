@@ -47,12 +47,39 @@ function fixture(
   }
 }
 
-test('verified: exact registry mint with no unexpected controls', () => {
-  const result = classifyControls(fixture())
+test('verified: live registry controls match documented xStocks authorities', () => {
+  const result = classifyControls(
+    fixture({
+      freezeAuthority: registeredMint.expectedControls.freezeAuthority,
+      extensions: [
+        {
+          type: 'PermanentDelegate',
+          typeId: 12,
+          recognized: true,
+          data: { delegate: registeredMint.expectedControls.permanentDelegate },
+          rawDataBase64: 'fixture',
+        },
+        {
+          type: 'DefaultAccountState',
+          typeId: 6,
+          recognized: true,
+          data: { state: 1 },
+          rawDataBase64: 'AQ==',
+        },
+      ],
+    }),
+  )
 
   assert.equal(result.verification.status, 'verified')
   assert.equal(result.verification.issuer, registeredMint.issuer)
-  assert.equal(result.findings.length, 0)
+  assert.equal(result.findings.length, 3)
+  assert.deepEqual(
+    result.findings.slice(0, 2).map(({ classification }) => classification),
+    ['expected', 'expected'],
+  )
+  assert.match(result.findings[0]?.summary ?? '', /documented compliance operations/i)
+  assert.match(result.findings[0]?.summary ?? '', /KYC\/AML/i)
+  assert.equal(result.findings[2]?.classification, 'unknown')
 })
 
 test('known-wrapper: sourced mint match with a control mismatch', () => {
@@ -63,7 +90,7 @@ test('known-wrapper: sourced mint match with a control mismatch', () => {
   assert.equal(result.verification.status, 'known-wrapper')
   assert.equal(result.findings[0]?.classification, 'unexpected')
   assert.equal(result.findings[0]?.address, 'UnexpectedFreezeAuthority1111111111111111111')
-  assert.match(result.findings[0]?.summary ?? '', /expects no holder/i)
+  assert.match(result.findings[0]?.summary ?? '', /does not match/i)
 })
 
 test('unverified: unknown mint controls stay graded as unknown', () => {

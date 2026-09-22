@@ -177,13 +177,14 @@ function classificationFor(
 ): ControlClassification {
   if (!registryEntry) return 'unknown'
 
-  const expectedAddress = control.expectedControl
-    ? registryEntry.expectedControls[control.expectedControl]
-    : undefined
+  // Only controls with an explicit registry slot can be compared safely.
+  // Other Token-2022 controls stay visible as unknown instead of becoming a
+  // false mismatch merely because the registry has not modeled them yet.
+  if (!control.expectedControl) return 'unknown'
 
-  return expectedAddress !== undefined && expectedAddress === control.address
-    ? 'expected'
-    : 'unexpected'
+  const expectedAddress = registryEntry.expectedControls[control.expectedControl]
+
+  return expectedAddress === control.address ? 'expected' : 'unexpected'
 }
 
 function explanationForClassification(
@@ -191,10 +192,15 @@ function explanationForClassification(
   classification: ControlClassification,
   registryEntry: ReturnType<typeof lookupMint>,
 ): string {
-  if (classification === 'unknown') return control.unknownExplanation
+  if (classification === 'unknown') {
+    return registryEntry
+      ? `${registryEntry.issuer} is verified for this mint, but the registry does not yet document ${control.title} as an expected control. Review the live control before relying on it.`
+      : control.unknownExplanation
+  }
 
   if (classification === 'expected') {
-    return `${registryEntry?.issuer ?? 'The verified issuer'} retains this authority for documented compliance operations.`
+    const documentation = registryEntry?.controlDocumentation
+    return `${registryEntry?.issuer ?? 'The verified issuer'} retains this authority for documented compliance operations. ${documentation?.note ?? ''}`.trim()
   }
 
   if (!control.expectedControl) {
