@@ -1,8 +1,14 @@
 export const REGISTRY_VERSION = '2026-09-22.2'
 
 export interface ExpectedControls {
+  mintAuthority: string | null
   permanentDelegate: string | null
   freezeAuthority: string | null
+  metadataAuthority: string | null
+  pausableAuthority: string | null
+  transferHookAuthority: string | null
+  scaledUiAmountAuthority: string | null
+  expectedExtensions: readonly string[]
 }
 
 export interface ControlDocumentation {
@@ -28,8 +34,23 @@ const ONDO_TOKEN_LIST =
   'https://www.dropbox.com/scl/fi/qjfxyg748mx0dwi6up86d/EXTERNAL-Ondo-GM-Tokens-Ondo-GM-Tokens.csv?rlkey=n3no1w78wrah3umsl0nr9s77i&st=spdit2q1&dl=1'
 
 const XSTOCKS_EXPECTED_CONTROLS: ExpectedControls = {
+  mintAuthority: '7pt9tkctJPK7PPNQJ77GKg8ZffSF6QxoMiCFYHxrtaCj',
   permanentDelegate: '5aMNNLQJwAEeoemTEMkv5NVjqKwvvefRYCQ5Z67HFvEq',
   freezeAuthority: 'JDq14BWvqCRFNu1krb12bcRpbGtJZ1FLEakMw6FdxJNs',
+  metadataAuthority: '5aMNNLQJwAEeoemTEMkv5NVjqKwvvefRYCQ5Z67HFvEq',
+  pausableAuthority: 'JDq14BWvqCRFNu1krb12bcRpbGtJZ1FLEakMw6FdxJNs',
+  transferHookAuthority: '5aMNNLQJwAEeoemTEMkv5NVjqKwvvefRYCQ5Z67HFvEq',
+  scaledUiAmountAuthority: 'S7vYFFWH6BjJyEsdrPQpqpYTqLTrPRK6KW3VwsJuRaS',
+  expectedExtensions: [
+    'MetadataPointer',
+    'PermanentDelegate',
+    'DefaultAccountState',
+    'ScaledUiAmountConfig',
+    'PausableConfig',
+    'ConfidentialTransferMint',
+    'TransferHook',
+    'TokenMetadata',
+  ],
 }
 const XSTOCKS_CONTROL_DOCUMENTATION: ControlDocumentation = {
   url: 'https://docs.xstocks.fi/docs/product-legal-overview',
@@ -37,8 +58,14 @@ const XSTOCKS_CONTROL_DOCUMENTATION: ControlDocumentation = {
     'Addresses verified on-chain from each official Token-2022 mint. Backed documents KYC/AML, transfer restrictions, and regulated issuer obligations that require compliance controls.',
 }
 const ONDO_EXPECTED_CONTROLS: ExpectedControls = {
+  mintAuthority: null,
   permanentDelegate: null,
   freezeAuthority: '51QVCuHfL1FeNjd8BDeffCKhCcAYoULnVB3yjNhShiuK',
+  metadataAuthority: null,
+  pausableAuthority: null,
+  transferHookAuthority: null,
+  scaledUiAmountAuthority: null,
+  expectedExtensions: [],
 }
 const ONDO_CONTROL_DOCUMENTATION: ControlDocumentation = {
   url: 'https://docs.ondo.finance/ondo-stocks/legal-and-regulatory',
@@ -57,10 +84,12 @@ const ONDO_CONTROL_DOCUMENTATION: ControlDocumentation = {
  *   https://docs.ondo.finance/addresses under "Ondo Stocks".
  * - Pyth feed IDs were copied from the official Pyth symbology endpoint:
  *   https://pyth.dourolabs.app/v1/symbols
- * - Control addresses were read on-chain from those exact official Token-2022
- *   mints on 2026-09-22. Backed's eight mints shared one permanent delegate and
- *   one freeze authority. Ondo's four mints shared one freeze authority and had
- *   no PermanentDelegate extension.
+ * - Control addresses and expected extension sets were read on-chain from those
+ *   exact official Token-2022 mints on 2026-09-22. Backed's eight mints shared
+ *   the same mint authority, permanent delegate, freeze authority, metadata
+ *   authority, pausable authority, transfer hook authority, and scaled UI amount
+ *   authority. Ondo's four mints shared one freeze authority and had no
+ *   PermanentDelegate extension.
  * - Issuer documentation explains the compliance/legal purpose of these
  *   controls but does not publish the authority wallet addresses. The addresses
  *   therefore use the permitted on-chain-verifiable source, never inference.

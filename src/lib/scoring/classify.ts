@@ -1,4 +1,5 @@
 import { REGISTRY_VERSION, lookupMint } from '../registry'
+import type { ExpectedControls } from '../registry'
 import type {
   ControlClassification,
   ControlFinding,
@@ -14,7 +15,8 @@ interface LiveControl {
   title: string
   address: string | null
   unknownExplanation: string
-  expectedControl?: 'freezeAuthority' | 'permanentDelegate'
+  expectedControl?: Exclude<keyof ExpectedControls, 'expectedExtensions'>
+  extensionType?: string
 }
 
 const authorityKeyPattern =
@@ -101,6 +103,7 @@ function extensionControls(scan: ScanResult): LiveControl[] {
                 : 'other-extension',
           title: extension.type,
           address: null,
+          extensionType: extension.type,
           unknownExplanation: extension.recognized
             ? `This token uses the ${extension.type} feature, but StockLens has no verified issuer record explaining why it is enabled.`
             : `This token contains the ${extension.type} extension. The installed decoder cannot interpret it, so its purpose is not verified.`,
@@ -124,6 +127,17 @@ function extensionControls(scan: ScanResult): LiveControl[] {
                   : 'other-extension',
       title: `${extension.type} ${key}`,
       address: value as string,
+      expectedControl:
+        extension.type === 'MetadataPointer' || extension.type === 'TokenMetadata'
+          ? 'metadataAuthority'
+          : extension.type === 'PausableConfig'
+            ? 'pausableAuthority'
+            : extension.type === 'TransferHook'
+              ? 'transferHookAuthority'
+              : extension.type === 'ScaledUiAmountConfig'
+                ? 'scaledUiAmountAuthority'
+                : undefined,
+      extensionType: extension.type,
       unknownExplanation: explanationFor(extension.type, key),
     }))
   })
@@ -138,6 +152,7 @@ function collectLiveControls(scan: ScanResult): LiveControl[] {
       type: 'mint-authority',
       title: 'Mint authority',
       address: scan.mint.mintAuthority,
+      expectedControl: 'mintAuthority',
       unknownExplanation:
         'An unidentified wallet can create more of this token, which can dilute existing holders.',
     })
@@ -180,7 +195,12 @@ function classificationFor(
   // Only controls with an explicit registry slot can be compared safely.
   // Other Token-2022 controls stay visible as unknown instead of becoming a
   // false mismatch merely because the registry has not modeled them yet.
-  if (!control.expectedControl) return 'unknown'
+  if (!control.expectedControl) {
+    return control.extensionType &&
+      registryEntry.expectedControls.expectedExtensions.includes(control.extensionType)
+      ? 'expected'
+      : 'unknown'
+  }
 
   const expectedAddress = registryEntry.expectedControls[control.expectedControl]
 

@@ -50,8 +50,16 @@ function fixture(
 test('verified: live registry controls match documented xStocks authorities', () => {
   const result = classifyControls(
     fixture({
+      mintAuthority: registeredMint.expectedControls.mintAuthority,
       freezeAuthority: registeredMint.expectedControls.freezeAuthority,
       extensions: [
+        {
+          type: 'MetadataPointer',
+          typeId: 18,
+          recognized: true,
+          data: { authority: registeredMint.expectedControls.metadataAuthority },
+          rawDataBase64: 'fixture',
+        },
         {
           type: 'PermanentDelegate',
           typeId: 12,
@@ -66,20 +74,30 @@ test('verified: live registry controls match documented xStocks authorities', ()
           data: { state: 1 },
           rawDataBase64: 'AQ==',
         },
+        {
+          type: 'PausableConfig',
+          typeId: 26,
+          recognized: true,
+          data: { authority: registeredMint.expectedControls.pausableAuthority, paused: false },
+          rawDataBase64: 'fixture',
+        },
+        {
+          type: 'ScaledUiAmountConfig',
+          typeId: 25,
+          recognized: true,
+          data: { authority: registeredMint.expectedControls.scaledUiAmountAuthority },
+          rawDataBase64: 'fixture',
+        },
       ],
     }),
   )
 
   assert.equal(result.verification.status, 'verified')
   assert.equal(result.verification.issuer, registeredMint.issuer)
-  assert.equal(result.findings.length, 3)
-  assert.deepEqual(
-    result.findings.slice(0, 2).map(({ classification }) => classification),
-    ['expected', 'expected'],
-  )
+  assert.equal(result.findings.length, 7)
+  assert.ok(result.findings.every(({ classification }) => classification === 'expected'))
   assert.match(result.findings[0]?.summary ?? '', /documented compliance operations/i)
   assert.match(result.findings[0]?.summary ?? '', /KYC\/AML/i)
-  assert.equal(result.findings[2]?.classification, 'unknown')
 })
 
 test('known-wrapper: sourced mint match with a control mismatch', () => {
