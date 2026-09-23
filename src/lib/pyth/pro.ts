@@ -1,4 +1,4 @@
-import type { IssuerRegistryEntry } from '../registry'
+import type { IssuerRegistryEntry } from '../registry/index.js'
 
 const DEFAULT_PYTH_PRO_URL = 'https://pyth-lazer.dourolabs.app'
 const STALE_AFTER_SECONDS = 60

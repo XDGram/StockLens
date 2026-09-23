@@ -25,13 +25,13 @@ import {
 } from '@solana/spl-token'
 import { PublicKey, type Connection } from '@solana/web3.js'
 
-import { ISSUER_REGISTRY, REGISTRY_VERSION, lookupMint } from '../registry'
-import { classifyControls } from '../scoring/classify'
+import { ISSUER_REGISTRY, REGISTRY_VERSION, lookupMint } from '../registry/index.js'
+import { classifyControls } from '../scoring/classify.js'
 import type {
   JsonValue,
   MintExtensionResult,
   ScanResult,
-} from '../../types'
+} from '../../types/index.js'
 
 type ExtensionDecoder = (
   mint: Mint,

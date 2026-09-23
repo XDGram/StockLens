@@ -1,5 +1,5 @@
-import { REGISTRY_VERSION, lookupMint } from '../registry'
-import type { ExpectedControls } from '../registry'
+import { REGISTRY_VERSION, lookupMint } from '../registry/index.js'
+import type { ExpectedControls } from '../registry/index.js'
 import type {
   ControlClassification,
   ControlFinding,
@@ -7,7 +7,7 @@ import type {
   JsonValue,
   ScanResult,
   VerificationResult,
-} from '../../types'
+} from '../../types/index.js'
 
 interface LiveControl {
   id: string
