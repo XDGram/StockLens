@@ -65,6 +65,10 @@ function errorMessage(error: unknown): string {
     return 'Pyth Hermes authentication failed. Set a valid PYTH_API_KEY.'
   }
 
+  if (/403|not entitled/i.test(message)) {
+    return 'Pyth API key is valid but not entitled to this feed. Enable the required feed grant in Pyth Terminal.'
+  }
+
   return `Pyth Hermes request failed: ${message}`
 }
 
@@ -161,6 +165,28 @@ function snapshot(
   }
 }
 
+async function fetchSnapshot(
+  client: HermesClient,
+  feedId: string,
+  now: Date,
+  market: EquityMarketStatus,
+  isEquity: boolean,
+): Promise<PriceFeedSnapshot> {
+  try {
+    const response = await client.getLatestPriceUpdates([feedId], {
+      parsed: true,
+      ignoreInvalidPriceIds: true,
+    })
+    const parsed = (response.parsed ?? []).find(
+      (update) => normalizeFeedId(update.id) === feedId,
+    )
+
+    return snapshot(feedId, parsed, now, market, isEquity)
+  } catch (error) {
+    return unavailableFeed(feedId, errorMessage(error))
+  }
+}
+
 export async function comparePrices(
   registryEntry: IssuerRegistryEntry,
 ): Promise<PriceComparison> {
@@ -175,15 +201,10 @@ export async function comparePrices(
       timeout: 20_000,
       httpRetries: 2,
     })
-    const response = await client.getLatestPriceUpdates(
-      [equityFeedId, tokenFeedId],
-      { parsed: true, ignoreInvalidPriceIds: true },
-    )
-    const updates = new Map(
-      (response.parsed ?? []).map((update) => [normalizeFeedId(update.id), update]),
-    )
-    const underlying = snapshot(equityFeedId, updates.get(equityFeedId), now, market, true)
-    const token = snapshot(tokenFeedId, updates.get(tokenFeedId), now, market, false)
+    const [underlying, token] = await Promise.all([
+      fetchSnapshot(client, equityFeedId, now, market, true),
+      fetchSnapshot(client, tokenFeedId, now, market, false),
+    ])
     const available = underlying.status === 'available' && token.status === 'available'
 
     return {
