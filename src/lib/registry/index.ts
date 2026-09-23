@@ -1,4 +1,4 @@
-export const REGISTRY_VERSION = '2026-09-22.2'
+export const REGISTRY_VERSION = '2026-09-23.1'
 
 export interface ExpectedControls {
   mintAuthority: string | null
@@ -24,6 +24,7 @@ export interface IssuerRegistryEntry {
   source: string
   pythEquityFeed: string
   pythTokenFeed: string
+  pythProEquityFeedId?: number
   expectedControls: ExpectedControls
   controlDocumentation: ControlDocumentation
   lastVerifiedAt: string
@@ -118,6 +119,7 @@ export const ISSUER_REGISTRY = [
     source: `${XSTOCKS_ASSET_API}/TSLAx`,
     pythEquityFeed: '16dad506d7db8da01c87581c87ca897a012a153557d4d578c3b9c9e1bc0632f1',
     pythTokenFeed: '47a156470288850a440df3a6ce85a55917b813a19bb5b31128a33a986566a362',
+    pythProEquityFeedId: 1435,
     expectedControls: XSTOCKS_EXPECTED_CONTROLS,
     controlDocumentation: XSTOCKS_CONTROL_DOCUMENTATION,
     lastVerifiedAt: '2026-09-22',
@@ -214,6 +216,7 @@ export const ISSUER_REGISTRY = [
     source: ONDO_TOKEN_LIST,
     pythEquityFeed: '16dad506d7db8da01c87581c87ca897a012a153557d4d578c3b9c9e1bc0632f1',
     pythTokenFeed: 'c09ef687ed07091c047da444f1499f2da52cdc1c085104643ec565a9eb1af514',
+    pythProEquityFeedId: 1435,
     expectedControls: ONDO_EXPECTED_CONTROLS,
     controlDocumentation: ONDO_CONTROL_DOCUMENTATION,
     lastVerifiedAt: '2026-09-22',

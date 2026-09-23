@@ -13,7 +13,8 @@
     "script": "tsx",
     "script:smoke": "tsx scripts/smoke.ts",
     "script:registry": "tsx scripts/registry-smoke.ts",
-    "scan": "tsx scripts/scan.ts"
+    "scan": "tsx scripts/scan.ts",
+    "exit-preview": "node --env-file-if-exists=.env.local --import tsx scripts/exit-preview.ts"
   },
   "dependencies": {
     "@jup-ag/api": "^6.0.48",
