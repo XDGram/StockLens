@@ -1,15 +1,21 @@
 import react from '@vitejs/plugin-react'
-import { Connection, clusterApiUrl } from '@solana/web3.js'
+import { Connection, PublicKey, clusterApiUrl } from '@solana/web3.js'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { defineConfig, loadEnv, type Connect } from 'vite'
 
 import { getExitPreview } from './src/lib/jupiter/exitPreview.js'
+import { buildSwap } from './src/lib/jupiter/execution.js'
 import { fetchPythProUnderlying } from './src/lib/pyth/pro.js'
 import { lookupMint } from './src/lib/registry/index.js'
 import { scanMint } from './src/lib/solana/inspect.js'
 
 interface ScanBody { mint?: string }
 interface ExitBody extends ScanBody { positionSize?: string; percentage?: number; slippageBps?: number }
+interface SwapBody extends ScanBody {
+  inputAmount?: string
+  slippageBps?: number
+  userPublicKey?: string
+}
 
 async function readJson<T>(request: IncomingMessage): Promise<T> {
   const chunks: Uint8Array[] = []
@@ -116,6 +122,30 @@ function stockLensApi(): Connect.NextHandleFunction {
             ? { status: 'available', price: underlying.price }
             : { status: 'unavailable' },
         })
+        return
+      }
+
+      if (request.url === '/api/swap-transaction') {
+        const {
+          mint = '',
+          inputAmount = '',
+          slippageBps = 50,
+          userPublicKey = '',
+        } = await readJson<SwapBody>(request)
+        const entry = lookupMint(mint.trim())
+        if (!entry) throw new Error('Swap execution is available only for registry-verified assets.')
+        if (![10, 50, 100].includes(slippageBps)) throw new Error('Choose a supported slippage tolerance.')
+        new PublicKey(userPublicKey)
+
+        const scan = await scanMint(connection, entry.mint)
+        const built = await buildSwap({
+          inputMint: entry.mint,
+          inputAmount,
+          inputDecimals: scan.mint.decimals,
+          userPublicKey,
+          slippageBps,
+        })
+        sendJson(response, 200, built)
         return
       }
 

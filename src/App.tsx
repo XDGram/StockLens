@@ -1,14 +1,17 @@
 import { type FormEvent, useEffect, useState } from 'react'
-import { PublicKey } from '@solana/web3.js'
+import { PublicKey, Transaction, TransactionInstruction, VersionedTransaction } from '@solana/web3.js'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { BaseWalletMultiButton } from '@solana/wallet-adapter-react-ui'
 
 import type { ExitPreview } from './lib/jupiter/exitPreview'
 import type { PythProPrice } from './lib/pyth/pro'
-import type { ScanResult, VerificationStatus } from './types'
+import { createReceiptEnvelope, downloadReceipt } from './lib/receipt/create'
+import type { DecisionReceipt, DecisionReceiptEnvelope, ScanResult, VerificationStatus } from './types'
 
 const AAPLX_MINT = 'XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp'
 const MAINNET_GENESIS_HASH = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
+const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr')
+const SOLSCAN_TRANSACTION = 'https://solscan.io/tx/'
 const PERCENTAGES = [10, 25, 50, 100] as const
 const SLIPPAGE_OPTIONS = [10, 50, 100] as const
 const WALLET_BUTTON_LABELS = {
@@ -20,7 +23,8 @@ const WALLET_BUTTON_LABELS = {
   'change-wallet': 'Change wallet',
   disconnect: 'Disconnect',
 } as const
-type Stage = 'input' | 'verification' | 'price' | 'exit' | 'rehearsal'
+type Stage = 'input' | 'verification' | 'price' | 'exit' | 'rehearsal' | 'execution' | 'receipt'
+type ExecutionStatus = 'idle' | 'awaiting-signature' | 'submitted' | 'confirming' | 'confirmed' | 'timed-out' | 'failed'
 
 interface AssetSummary { issuer: string; symbol: string; underlyingTicker: string }
 interface PriceRadar { underlying: PythProPrice; token: ExitPreview; premiumDiscountPercentage: number | null }
@@ -30,6 +34,24 @@ interface ExitResponse {
   exitAmount: string
   percentage: number
   referencePrice: { status: 'available'; price: number } | { status: 'unavailable' }
+}
+interface BuiltSwap {
+  swapTransaction: string
+  lastValidBlockHeight: number
+  quote: {
+    inputMint: string
+    outputMint: string
+    inputAmount: string
+    inputAmountRaw: string
+    expectedOutputAmount: string
+    expectedOutputUsd: number
+    minimumOutputAmount: string
+    minimumOutputUsd: number
+    priceImpactPercentage: number
+    slippageBps: number
+    routeLabels: string[]
+    quotedAt: string
+  }
 }
 
 const statusCopy: Record<VerificationStatus, { label: string; headline: string; body: string }> = {
@@ -45,6 +67,8 @@ const stageLabels: Array<{ key: Stage; label: string }> = [
   { key: 'price', label: 'Compare' },
   { key: 'exit', label: 'Exit' },
   { key: 'rehearsal', label: 'Rehearse' },
+  { key: 'execution', label: 'Execute' },
+  { key: 'receipt', label: 'Receipt' },
 ]
 
 function shortAddress(address: string | null): string {
@@ -81,6 +105,25 @@ async function postJson<T>(url: string, body: object): Promise<T> {
   return result
 }
 
+function executionError(error: unknown): { message: string; kind: 'rejected' | 'slippage' | 'expired' | 'other' } {
+  const detail = error instanceof Error ? error.message : String(error)
+  const normalized = detail.toLowerCase()
+  if (normalized.includes('reject') || normalized.includes('cancel')) {
+    return { kind: 'rejected', message: 'Signature request was rejected. Nothing was submitted.' }
+  }
+  if (normalized.includes('slippage') || normalized.includes('0x1771') || normalized.includes('6001')) {
+    return { kind: 'slippage', message: 'The market moved beyond your slippage limit. Review a fresh quote or choose a higher tolerance.' }
+  }
+  if (normalized.includes('blockhash') || normalized.includes('expired') || normalized.includes('last valid block')) {
+    return { kind: 'expired', message: 'The route expired before submission. StockLens refreshed it once; review and retry.' }
+  }
+  return { kind: 'other', message: detail || 'The transaction could not be submitted.' }
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+}
+
 function Progress({ stage }: { stage: Stage }) {
   const activeIndex = stageLabels.findIndex((item) => item.key === stage)
   return (
@@ -115,7 +158,7 @@ function TokenArtifact({ symbol = 'AAPLx', danger = false }: { symbol?: string; 
 
 function App() {
   const { connection } = useConnection()
-  const { connected, publicKey } = useWallet()
+  const { connected, publicKey, signTransaction, sendTransaction } = useWallet()
   const [stage, setStage] = useState<Stage>('input')
   const [mint, setMint] = useState('')
   const [result, setResult] = useState<ScanResponse | null>(null)
@@ -130,6 +173,12 @@ function App() {
   const [walletBusy, setWalletBusy] = useState(false)
   const [walletMessage, setWalletMessage] = useState('')
   const [walletBalance, setWalletBalance] = useState<string | null>(null)
+  const [executionStatus, setExecutionStatus] = useState<ExecutionStatus>('idle')
+  const [executionMessage, setExecutionMessage] = useState('')
+  const [transactionSignature, setTransactionSignature] = useState<string | null>(null)
+  const [builtSwap, setBuiltSwap] = useState<BuiltSwap | null>(null)
+  const [receiptEnvelope, setReceiptEnvelope] = useState<DecisionReceiptEnvelope | null>(null)
+  const [memoMessage, setMemoMessage] = useState('')
 
   const scan = async (event?: FormEvent) => {
     event?.preventDefault()
@@ -236,6 +285,12 @@ function App() {
     setPositionSize('1')
     setPercentage(100)
     setSlippageBps(50)
+    setExecutionStatus('idle')
+    setExecutionMessage('')
+    setTransactionSignature(null)
+    setBuiltSwap(null)
+    setReceiptEnvelope(null)
+    setMemoMessage('')
   }
 
   const status = result?.scan.verification.status ?? 'unverified'
@@ -247,26 +302,216 @@ function App() {
   const availableQuote = exitResult?.preview.status === 'available' ? exitResult.preview : null
   const rehearsalConditions = [
     {
+      id: 'verified-issuer',
       label: 'Verified issuer',
       passed: status === 'verified',
       fact: status === 'verified' ? `${result?.asset?.issuer ?? 'Issuer'} registry match` : statusCopy[status].label,
+      required: 'verified registry mint and controls',
     },
     {
+      id: 'liquidity-threshold',
       label: 'Liquidity above threshold',
       passed: Boolean(availableQuote && availableQuote.priceImpactPercentage <= 3),
       fact: availableQuote ? `${availableQuote.priceImpactPercentage.toFixed(3)}% impact, limit 3%` : 'No executable quote',
+      required: 'price impact at or below 3%',
     },
     {
+      id: 'unexpected-controls',
       label: 'No unexpected controls',
       passed: unexpectedCount === 0,
       fact: unexpectedCount === 0 ? `${expectedCount} documented controls` : `${unexpectedCount} unexpected controls`,
+      required: 'zero unexpected controls',
     },
     {
+      id: 'price-divergence',
       label: 'Price divergence within limits',
       passed: priceDivergence !== null && Math.abs(priceDivergence) <= 5,
       fact: priceDivergence === null ? 'Reference price unavailable' : `${Math.abs(priceDivergence).toFixed(2)}% divergence, limit 5%`,
+      required: 'absolute divergence at or below 5%',
     },
   ]
+
+  const awaitConfirmation = async (signature: string, lastValidBlockHeight: number, timeoutMs = 45_000): Promise<boolean> => {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      const response = await connection.getSignatureStatuses([signature], { searchTransactionHistory: true })
+      const transactionStatus = response.value[0]
+      if (transactionStatus?.err) throw new Error(`Transaction failed: ${JSON.stringify(transactionStatus.err)}`)
+      if (transactionStatus?.confirmationStatus === 'confirmed' || transactionStatus?.confirmationStatus === 'finalized') return true
+      if (!transactionStatus && await connection.getBlockHeight('confirmed') > lastValidBlockHeight) throw new Error('Transaction expired: last valid block height passed.')
+      await wait(1_800)
+    }
+    return false
+  }
+
+  const completeReceipt = async (swap: BuiltSwap, signature: string) => {
+    if (!result || !result.asset || !publicKey) return
+
+    const receipt: DecisionReceipt = {
+      receiptVersion: '1.0',
+      receiptId: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      walletAddress: publicKey.toBase58(),
+      mintAddress: result.scan.mintAddress,
+      symbol: result.asset.symbol,
+      issuer: result.asset.issuer,
+      registryVersion: result.scan.verification.registryVersion,
+      scanId: result.scan.scanId,
+      verification: {
+        status,
+        findings: result.scan.controlFindings.map((finding) => ({
+          type: finding.type,
+          address: finding.address,
+          classification: finding.classification,
+          summary: finding.summary,
+        })),
+      },
+      conditions: rehearsalConditions.map((condition) => ({
+        id: condition.id,
+        label: condition.label,
+        passed: condition.passed,
+        observedValue: condition.fact,
+        requiredValue: condition.required,
+      })),
+      pyth: result.priceRadar.underlying.status === 'available'
+        ? {
+            status: 'available',
+            feedId: String(result.priceRadar.underlying.feedId),
+            referencePrice: result.priceRadar.underlying.price,
+            publishTime: result.priceRadar.underlying.publishTime,
+          }
+        : {
+            status: 'unavailable',
+            feedId: result.priceRadar.underlying.feedId === null ? null : String(result.priceRadar.underlying.feedId),
+            reason: result.priceRadar.underlying.reason,
+          },
+      jupiterQuote: {
+        inputMint: swap.quote.inputMint,
+        outputMint: swap.quote.outputMint,
+        inputAmount: swap.quote.inputAmountRaw,
+        expectedOutputAmount: swap.quote.expectedOutputAmount,
+        minimumOutputAmount: swap.quote.minimumOutputAmount,
+        priceImpactPercent: swap.quote.priceImpactPercentage,
+        slippageBps: swap.quote.slippageBps,
+        quotedAt: swap.quote.quotedAt,
+      },
+      transaction: {
+        signature,
+        explorerUrl: `${SOLSCAN_TRANSACTION}${signature}`,
+      },
+      memo: { mode: 'follow-up-transaction' },
+    }
+
+    const envelope = await createReceiptEnvelope(receipt)
+    setReceiptEnvelope(envelope)
+    setExecutionStatus('confirmed')
+    setStage('receipt')
+
+    // Jupiter returns a compiled versioned transaction. Rebuilding it to insert
+    // a Memo can invalidate address-table assumptions, so the receipt proof is
+    // sent as a small, reliable follow-up transaction after swap confirmation.
+    try {
+      setMemoMessage('Awaiting signature for the on-chain receipt proof...')
+      const latest = await connection.getLatestBlockhash('confirmed')
+      const memoTransaction = new Transaction({
+        feePayer: publicKey,
+        blockhash: latest.blockhash,
+        lastValidBlockHeight: latest.lastValidBlockHeight,
+      }).add(new TransactionInstruction({
+        programId: MEMO_PROGRAM_ID,
+        keys: [],
+        data: new TextEncoder().encode(`StockLens:${envelope.receiptHash}:${result.scan.mintAddress}`) as TransactionInstruction['data'],
+      }))
+      const memoSignature = await sendTransaction(memoTransaction, connection, { skipPreflight: false, maxRetries: 3 })
+      setMemoMessage('Receipt proof submitted to Solana.')
+      const memoConfirmed = await awaitConfirmation(memoSignature, latest.lastValidBlockHeight, 30_000)
+      setReceiptEnvelope({
+        ...envelope,
+        memoSignature,
+        memoExplorerUrl: `${SOLSCAN_TRANSACTION}${memoSignature}`,
+      })
+      setMemoMessage(memoConfirmed ? 'Receipt proof confirmed on Solana.' : 'Receipt proof submitted. Confirmation is taking longer than expected.')
+    } catch (memoError) {
+      const detail = executionError(memoError)
+      setMemoMessage(detail.kind === 'rejected' ? 'On-chain receipt proof was skipped. Your local receipt is still complete.' : `Receipt proof was not confirmed: ${detail.message}`)
+    }
+  }
+
+  const executeSwap = async () => {
+    if (!result?.asset || !exitResult || !availableQuote || !publicKey || !signTransaction) return
+    setStage('execution')
+    setExecutionStatus('awaiting-signature')
+    setExecutionMessage('Building a fresh Jupiter route...')
+    setTransactionSignature(null)
+    setReceiptEnvelope(null)
+
+    try {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const swap = await postJson<BuiltSwap>('/api/swap-transaction', {
+          mint: result.scan.mintAddress,
+          inputAmount: exitResult.exitAmount,
+          slippageBps,
+          userPublicKey: publicKey.toBase58(),
+        })
+        setBuiltSwap(swap)
+        setExecutionStatus('awaiting-signature')
+        setExecutionMessage(attempt === 0 ? 'Check the transaction in your wallet.' : 'The route was refreshed once. Review the new transaction in your wallet.')
+
+        try {
+          const bytes = Uint8Array.from(atob(swap.swapTransaction), (character) => character.charCodeAt(0))
+          const transaction = VersionedTransaction.deserialize(bytes)
+          const signed = await signTransaction(transaction)
+          setExecutionStatus('submitted')
+          setExecutionMessage('Submitting the signed transaction...')
+          const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false, maxRetries: 3 })
+          setTransactionSignature(signature)
+          setExecutionStatus('confirming')
+          setExecutionMessage('Waiting for Solana confirmation...')
+
+          const confirmed = await awaitConfirmation(signature, swap.lastValidBlockHeight)
+          if (!confirmed) {
+            setExecutionStatus('timed-out')
+            setExecutionMessage('Confirmation is taking longer than expected. The transaction may still land.')
+            return
+          }
+
+          await completeReceipt(swap, signature)
+          return
+        } catch (caught) {
+          const detail = executionError(caught)
+          if (detail.kind === 'expired' && attempt === 0 && !transactionSignature) {
+            setExecutionMessage('The route expired. Re-quoting once...')
+            continue
+          }
+          throw caught
+        }
+      }
+    } catch (caught) {
+      const detail = executionError(caught)
+      setExecutionStatus('failed')
+      setExecutionMessage(detail.message)
+    }
+  }
+
+  const checkConfirmation = async () => {
+    if (!transactionSignature || !builtSwap) return
+    setExecutionStatus('confirming')
+    setExecutionMessage('Checking Solana again...')
+    try {
+      const response = await connection.getSignatureStatuses([transactionSignature], { searchTransactionHistory: true })
+      const current = response.value[0]
+      if (current?.err) throw new Error(`Transaction failed: ${JSON.stringify(current.err)}`)
+      if (current?.confirmationStatus === 'confirmed' || current?.confirmationStatus === 'finalized') {
+        await completeReceipt(builtSwap, transactionSignature)
+        return
+      }
+      setExecutionStatus('timed-out')
+      setExecutionMessage('Still not confirmed. Use Solscan to follow the transaction, then check again.')
+    } catch (caught) {
+      setExecutionStatus('failed')
+      setExecutionMessage(executionError(caught).message)
+    }
+  }
 
   return (
     <main className={`app status-theme-${status}`}>
@@ -430,8 +675,8 @@ function App() {
               </div>
 
               <div className="scene-actions">
-                <button className="primary-action" type="button" onClick={() => setStage('exit')}>Back to exit preview</button>
-                <button className="text-action" type="button" onClick={reset}>Scan another mint</button>
+                <button className="primary-action execute-action" type="button" disabled={!availableQuote || exitBusy} onClick={() => void executeSwap()}>{exitBusy ? 'Refreshing quote' : 'Approve and swap'} <Arrow /></button>
+                <button className="text-action" type="button" onClick={() => setStage('exit')}>Back to exit preview</button>
               </div>
             </div>
 
@@ -461,6 +706,109 @@ function App() {
               <footer className="rehearsal-foot">
                 <span>Connected wallet</span>
                 <code>{shortAddress(publicKey?.toBase58() ?? null)}</code>
+              </footer>
+            </article>
+          </div>
+        )}
+
+        {stage === 'execution' && result && (
+          <div className="scene scene-execution">
+            <div className="scene-copy enter-one">
+              <p className="context-label">Live execution</p>
+              <h1>Your trade is <em>in motion.</em></h1>
+              <p className="intro">Keep this page open while StockLens tracks the transaction directly on Solana.</p>
+
+              <div className="execution-timeline" aria-label="Transaction status">
+                {[
+                  ['awaiting-signature', 'Awaiting signature'],
+                  ['submitted', 'Submitted'],
+                  ['confirming', 'Confirming'],
+                  ['confirmed', 'Confirmed'],
+                ].map(([key, label], index) => {
+                  const order: ExecutionStatus[] = ['awaiting-signature', 'submitted', 'confirming', 'confirmed']
+                  const activeIndex = order.indexOf(executionStatus)
+                  const complete = executionStatus === 'timed-out' ? index < 2 : activeIndex > index
+                  const active = executionStatus === key || (executionStatus === 'timed-out' && key === 'confirming')
+                  return <div className={complete ? 'is-complete' : active ? 'is-active' : ''} key={key}><span>{complete ? '\u2713' : index + 1}</span><strong>{label}</strong></div>
+                })}
+              </div>
+
+              <p className={`execution-message execution-${executionStatus}`} role="status">{executionMessage}</p>
+              <div className="scene-actions">
+                {executionStatus === 'failed' && <button className="primary-action" type="button" onClick={() => setStage('rehearsal')}>Review and retry</button>}
+                {executionStatus === 'timed-out' && <button className="primary-action" type="button" onClick={() => void checkConfirmation()}>Check confirmation</button>}
+                {transactionSignature && <a className="text-link" href={`${SOLSCAN_TRANSACTION}${transactionSignature}`} target="_blank" rel="noreferrer">View on Solscan</a>}
+              </div>
+            </div>
+
+            <div className="execution-card enter-two">
+              <span>Current transaction</span>
+              <strong>{result.asset?.symbol ?? 'Token'} <i>&#8594;</i> USDC</strong>
+              <div><span>Amount</span><b>{builtSwap?.quote.inputAmount ?? exitResult?.exitAmount ?? '...'} {result.asset?.symbol ?? 'Token'}</b></div>
+              <div><span>Expected output</span><b>{builtSwap ? `~${builtSwap.quote.expectedOutputUsd.toFixed(2)} USDC` : 'Building route'}</b></div>
+              <div><span>Slippage</span><b>{(slippageBps / 100).toFixed(1)}%</b></div>
+              <small>No transaction is labelled safe. Your wallet shows the final instructions before signing.</small>
+            </div>
+          </div>
+        )}
+
+        {stage === 'receipt' && result && receiptEnvelope && (
+          <div className="scene scene-receipt">
+            <div className="scene-copy enter-one">
+              <p className="context-label">Decision receipt</p>
+              <h1>Confirmed. <em>Keep the proof.</em></h1>
+              <p className="intro">A durable record of what StockLens observed before your transaction was signed.</p>
+
+              <div className="receipt-proof">
+                <span>SHA-256 receipt hash</span>
+                <code title={receiptEnvelope.receiptHash}>{receiptEnvelope.receiptHash.slice(0, 16)}...{receiptEnvelope.receiptHash.slice(-12)}</code>
+                <button type="button" onClick={() => void navigator.clipboard.writeText(receiptEnvelope.receiptHash)}>Copy hash</button>
+              </div>
+
+              <div className="scene-actions">
+                <button className="primary-action" type="button" onClick={() => downloadReceipt(receiptEnvelope)}>Download receipt JSON</button>
+                <button className="text-action" type="button" onClick={reset}>Scan another mint</button>
+              </div>
+              {memoMessage && <p className="message wallet-message" role="status">{memoMessage}</p>}
+            </div>
+
+            <article className="decision-receipt enter-two">
+              <header>
+                <div><span>Transaction confirmed</span><strong>{receiptEnvelope.receipt.symbol} to USDC</strong></div>
+                <span className={`rehearsal-verification status-${receiptEnvelope.receipt.verification.status}`}>{statusCopy[receiptEnvelope.receipt.verification.status].label}</span>
+              </header>
+
+              <div className="receipt-grid">
+                <div><span>Issuer</span><strong>{receiptEnvelope.receipt.issuer}</strong></div>
+                <div><span>Registry</span><strong>{receiptEnvelope.receipt.registryVersion}</strong></div>
+                <div><span>Mint</span><code title={receiptEnvelope.receipt.mintAddress}>{shortAddress(receiptEnvelope.receipt.mintAddress)}</code></div>
+                <div><span>Pyth reference</span><strong>{receiptEnvelope.receipt.pyth.status === 'available' ? money(receiptEnvelope.receipt.pyth.referencePrice ?? 0, 4) : 'Unavailable'}</strong><small>{receiptEnvelope.receipt.pyth.publishTime ? timestamp(receiptEnvelope.receipt.pyth.publishTime) : receiptEnvelope.receipt.pyth.reason}</small></div>
+                <div><span>Expected output</span><strong>{(Number(receiptEnvelope.receipt.jupiterQuote.expectedOutputAmount) / 1_000_000).toFixed(2)} USDC</strong></div>
+                <div><span>Price impact</span><strong>{receiptEnvelope.receipt.jupiterQuote.priceImpactPercent.toFixed(3)}%</strong></div>
+                <div><span>Slippage used</span><strong>{(receiptEnvelope.receipt.jupiterQuote.slippageBps / 100).toFixed(1)}%</strong></div>
+                <div><span>Transaction signature</span><code title={receiptEnvelope.receipt.transaction.signature}>{shortAddress(receiptEnvelope.receipt.transaction.signature)}</code></div>
+              </div>
+
+              <section className="conditions receipt-conditions" aria-label="Receipt conditions">
+                <h2>Conditions observed</h2>
+                {receiptEnvelope.receipt.conditions.map((condition) => (
+                  <div className={condition.passed ? 'condition-pass' : 'condition-fail'} key={condition.id}>
+                    <span aria-hidden="true">{condition.passed ? '\u2713' : '!'}</span>
+                    <div><strong>{condition.label}</strong><small>{condition.observedValue}</small></div>
+                  </div>
+                ))}
+              </section>
+
+              <section className="receipt-findings">
+                <h2>Authority findings</h2>
+                {receiptEnvelope.receipt.verification.findings.length === 0 ? <p>No active authority findings.</p> : receiptEnvelope.receipt.verification.findings.map((finding, index) => (
+                  <div key={`${finding.type}-${index}`}><span className={`finding-dot finding-dot-${finding.classification}`} /><div><strong>{finding.type.replaceAll('-', ' ')}</strong><small>{finding.summary}</small></div><code>{shortAddress(finding.address)}</code></div>
+                ))}
+              </section>
+
+              <footer>
+                <a href={receiptEnvelope.receipt.transaction.explorerUrl} target="_blank" rel="noreferrer">Swap transaction</a>
+                {receiptEnvelope.memoExplorerUrl ? <a href={receiptEnvelope.memoExplorerUrl} target="_blank" rel="noreferrer">Memo proof</a> : <span>Memo proof pending</span>}
               </footer>
             </article>
           </div>

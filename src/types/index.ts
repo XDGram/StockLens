@@ -121,28 +121,44 @@ export interface DecisionReceipt {
   createdAt: string
   walletAddress: string
   mintAddress: string
+  symbol: string
+  issuer: string
   registryVersion: string
   scanId: string
-  verificationStatus: VerificationStatus
-  controlFindingIds: string[]
-  conditions: DecisionCondition[]
-  pyth?: {
-    equityFeedId: string
-    tokenFeedId?: string
-    equityPrice: string
-    tokenPrice?: string
-    publishTime: string
-    confidence?: string
+  verification: {
+    status: VerificationStatus
+    findings: Array<Pick<ControlFinding, 'type' | 'address' | 'classification' | 'summary'>>
   }
-  jupiterQuote?: {
+  conditions: DecisionCondition[]
+  pyth: {
+    status: 'available' | 'unavailable'
+    feedId: string | null
+    referencePrice?: number
+    publishTime?: string
+    reason?: string
+  }
+  jupiterQuote: {
     inputMint: string
     outputMint: string
     inputAmount: string
     expectedOutputAmount: string
-    minimumOutputAmount?: string
-    priceImpactPercent?: string
+    minimumOutputAmount: string
+    priceImpactPercent: number
+    slippageBps: number
+    quotedAt: string
   }
-  transactionSignature?: string
+  transaction: {
+    signature: string
+    explorerUrl: string
+  }
+  memo: {
+    mode: 'follow-up-transaction'
+  }
+}
+
+export interface DecisionReceiptEnvelope {
+  receipt: DecisionReceipt
+  receiptHash: string
   memoSignature?: string
-  receiptHash?: string
+  memoExplorerUrl?: string
 }
