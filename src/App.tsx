@@ -124,12 +124,20 @@ function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
 }
 
-function Progress({ stage }: { stage: Stage }) {
+function Progress({ stage, onNavigate }: { stage: Stage; onNavigate: (stage: Stage) => void }) {
   const activeIndex = stageLabels.findIndex((item) => item.key === stage)
   return (
     <nav className="progress" aria-label="Scan progress">
       {stageLabels.map((item, index) => (
-        <span className={index === activeIndex ? 'is-current' : index < activeIndex ? 'is-complete' : ''} key={item.key}>{item.label}</span>
+        <button
+          className={index === activeIndex ? 'is-current' : index < activeIndex ? 'is-complete' : 'is-locked'}
+          disabled={index >= activeIndex}
+          key={item.key}
+          onClick={() => onNavigate(item.key)}
+          type="button"
+        >
+          <span>{String(index + 1).padStart(2, '0')}</span>{item.label}
+        </button>
       ))}
     </nav>
   )
@@ -513,15 +521,21 @@ function App() {
     }
   }
 
+  const navigateStage = (target: Stage) => {
+    const transactionInFlight = stage === 'execution' && ['awaiting-signature', 'submitted', 'confirming'].includes(executionStatus)
+    if (!transactionInFlight) setStage(target)
+  }
+
   return (
-    <main className={`app status-theme-${status}`}>
+    <main className={`app status-theme-${status}`} data-stage={stage}>
+      <a className="skip-link" href="#stocklens-experience">Skip to scanner</a>
       <header className="topbar">
-        <button className="brand" type="button" onClick={reset} aria-label="StockLens home">Stock<span>Lens</span></button>
-        <Progress stage={stage} />
-        <span className="network">Solana mainnet</span>
+        <button className="brand" type="button" onClick={reset} aria-label="StockLens home"><i aria-hidden="true">S</i>Stock<span>Lens</span></button>
+        <Progress stage={stage} onNavigate={navigateStage} />
+        <span className="network"><i aria-hidden="true" />Solana mainnet</span>
       </header>
 
-      <section className="experience" aria-live="polite">
+      <section className="experience" id="stocklens-experience" aria-live="polite">
         {stage === 'input' && (
           <div className="scene scene-input">
             <div className="scene-copy enter-one">
