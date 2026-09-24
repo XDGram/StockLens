@@ -9,7 +9,7 @@ import { lookupMint } from './src/lib/registry/index.js'
 import { scanMint } from './src/lib/solana/inspect.js'
 
 interface ScanBody { mint?: string }
-interface ExitBody extends ScanBody { positionSize?: string; percentage?: number }
+interface ExitBody extends ScanBody { positionSize?: string; percentage?: number; slippageBps?: number }
 
 async function readJson<T>(request: IncomingMessage): Promise<T> {
   const chunks: Uint8Array[] = []
@@ -91,9 +91,10 @@ function stockLensApi(): Connect.NextHandleFunction {
       }
 
       if (request.url === '/api/exit-preview') {
-        const { mint = '', positionSize = '', percentage = 100 } = await readJson<ExitBody>(request)
+        const { mint = '', positionSize = '', percentage = 100, slippageBps = 50 } = await readJson<ExitBody>(request)
         const entry = lookupMint(mint.trim())
         if (!entry) throw new Error('Exit Preview is available only for registry-verified assets.')
+        if (![10, 50, 100].includes(slippageBps)) throw new Error('Choose a supported slippage tolerance.')
 
         const [scan, underlying] = await Promise.all([
           scanMint(connection, entry.mint),
@@ -105,6 +106,7 @@ function stockLensApi(): Connect.NextHandleFunction {
           inputAmount: exitAmount,
           inputDecimals: scan.mint.decimals,
           referencePriceUsd: underlying.status === 'available' ? underlying.price : undefined,
+          slippageBps,
         })
         sendJson(response, 200, {
           preview,
